@@ -2,24 +2,26 @@ package com.thoughtworks.deeplearning
 import cats.{Eval, Monoid}
 import cats.implicits._
 import com.thoughtworks.deeplearning.DifferentiableAny.Trainable
-import com.thoughtworks.deeplearning.DifferentiableBoolean.BooleanMonoidBatch
-import com.thoughtworks.deeplearning.Lift._
+import com.thoughtworks.deeplearning.DifferentiableBoolean.BooleanMonoidTape
+import com.thoughtworks.deeplearning.Symbolic._
 import com.thoughtworks.deeplearning.Poly.MathMethods._
 import com.thoughtworks.deeplearning.Poly.MathFunctions._
 import com.thoughtworks.deeplearning.DifferentiableBoolean.Layers.If
-import com.thoughtworks.deeplearning.Layer.Batch
+import com.thoughtworks.deeplearning.Layer.Tape
 import com.thoughtworks.deeplearning.Poly.MathMethods
-import com.thoughtworks.deeplearning.Lift.Layers.Literal
+import com.thoughtworks.deeplearning.Symbolic.Layers.Literal
 import shapeless.the
 
 import language.implicitConversions
 
 /**
+  * A namespace of common operators for Double layers.
+  *
   * @author 杨博 (Yang Bo) &lt;pop.atry@gmail.com&gt;
   */
 object DifferentiableDouble {
 
-  private[deeplearning] trait DoubleMonoidBatch extends Batch {
+  private[deeplearning] trait DoubleMonoidTape extends Tape {
 
     override type Data = Double
 
@@ -33,37 +35,58 @@ object DifferentiableDouble {
 
   private[deeplearning] val DoublePlaceholder: DoublePlaceholder = implicitly
 
+  /**
+    * Optimizers of Double.
+    *
+    * @example{{{
+    * implicit val optimizerFactory = new DifferentiableDouble.OptimizerFactory {
+    *   override def doubleOptimizer(weight: Weight): Optimizer = {
+    *     new LearningRate with L2Regularization {
+    *
+    *       var learningRate = 0.00003
+    *
+    *       override protected def l2Regularization: Double = 0.003
+    *
+    *       override protected def currentLearningRate(): Double = {
+    *       learningRate * 0.75
+    *       learningRate
+    *      }
+    *    }
+    *  }
+    * }
+    * }}}
+    */
   object Optimizers {
 
     trait Optimizer {
-      def updateDouble(oldValue: Double, delta: Double): Double
+      def currentDelta(oldValue: Double, delta: Double): Double = delta
+
+      final def updateDouble(oldValue: Double, delta: Double): Double = {
+        oldValue - currentDelta(oldValue, delta)
+      }
     }
 
     trait LearningRate extends Optimizer {
 
       protected def currentLearningRate(): Double
 
-      override def updateDouble(oldValue: Double, delta: Double): Double = {
-        oldValue - delta * currentLearningRate()
-      }
+      override def currentDelta(oldValue: Double, delta: Double): Double = delta * currentLearningRate()
     }
 
-    trait L1Regularization extends LearningRate {
+    trait L1Regularization extends Optimizer {
       protected def l1Regularization: Double
 
-      override def updateDouble(oldValue: Double, delta: Double): Double = {
-        super.updateDouble(oldValue, delta) - math.signum(oldValue) * l1Regularization * currentLearningRate()
+      override def currentDelta(oldValue: Double, delta: Double): Double = {
+        super.currentDelta(oldValue, delta + math.signum(oldValue) * l1Regularization)
       }
-
     }
 
-    trait L2Regularization extends LearningRate {
+    trait L2Regularization extends Optimizer {
       protected def l2Regularization: Double
 
-      override def updateDouble(oldValue: Double, delta: Double): Double = {
-        super.updateDouble(oldValue, delta) - l2Regularization * oldValue * currentLearningRate()
+      override def currentDelta(oldValue: Double, delta: Double): Double = {
+        super.currentDelta(oldValue, delta + oldValue * l2Regularization)
       }
-
     }
 
   }
@@ -72,17 +95,17 @@ object DifferentiableDouble {
 
   object Layers {
 
-    final case class Exp[Input0 <: Batch](operand: Layer.Aux[Input0, DoublePlaceholder.Batch])
-        extends BufferedLayer.Unary {
+    final case class Exp[Input0 <: Tape](operand: Layer.Aux[Input0, DoublePlaceholder.Tape])
+        extends CumulativeLayer.Unary {
 
-      type BufferedBatch = DoubleMonoidBatch with MonoidBatch with UnaryBatch
+      type CumulativeTape = DoubleMonoidTape with MonoidTape with UnaryTape
 
       type Input = Input0
 
       override protected def rawForward(input0: Input) =
         new {
           override final val input = input0
-        } with MonoidBatch with DoubleMonoidBatch with UnaryBatch {
+        } with MonoidTape with DoubleMonoidTape with UnaryTape {
 
           val value: Double = math.exp(upstream.value).toDouble
 
@@ -94,19 +117,19 @@ object DifferentiableDouble {
 
     }
 
-    final case class LessThan[Input0 <: Batch](
-        operand1: Layer.Aux[Input0, DoublePlaceholder.Batch],
-        operand2: Layer.Aux[Input0, DoublePlaceholder.Batch]
-    ) extends BufferedLayer.Binary {
+    final case class LessThan[Input0 <: Tape](
+        operand1: Layer.Aux[Input0, DoublePlaceholder.Tape],
+        operand2: Layer.Aux[Input0, DoublePlaceholder.Tape]
+    ) extends CumulativeLayer.Binary {
 
-      type BufferedBatch = BooleanMonoidBatch with MonoidBatch with BinaryBatch
+      type CumulativeTape = BooleanMonoidTape with MonoidTape with BinaryTape
 
       type Input = Input0
 
-      override protected def rawForward(input0: Input): BufferedBatch = {
+      override protected def rawForward(input0: Input): CumulativeTape = {
         new {
           override final val input = input0
-        } with BooleanMonoidBatch with MonoidBatch with BinaryBatch {
+        } with BooleanMonoidTape with MonoidTape with BinaryTape {
           override val value = upstream1.value < upstream2.value
 
           override protected def rawBackward(delta: Delta): Unit = {
@@ -116,17 +139,17 @@ object DifferentiableDouble {
       }
     }
 
-    final case class Log[Input0 <: Batch](operand: Layer.Aux[Input0, DoublePlaceholder.Batch])
-        extends BufferedLayer.Unary {
+    final case class Log[Input0 <: Tape](operand: Layer.Aux[Input0, DoublePlaceholder.Tape])
+        extends CumulativeLayer.Unary {
 
-      type BufferedBatch = DoubleMonoidBatch with MonoidBatch with UnaryBatch
+      type CumulativeTape = DoubleMonoidTape with MonoidTape with UnaryTape
 
       type Input = Input0
 
       override protected def rawForward(input0: Input) =
         new {
           override final val input = input0
-        } with MonoidBatch with DoubleMonoidBatch with UnaryBatch {
+        } with MonoidTape with DoubleMonoidTape with UnaryTape {
 
           val value = math.log(upstream.value).toDouble
 
@@ -138,17 +161,17 @@ object DifferentiableDouble {
 
     }
 
-    final case class Negative[Input0 <: Batch](operand: Layer.Aux[Input0, DoublePlaceholder.Batch])
-        extends BufferedLayer.Unary {
+    final case class Negative[Input0 <: Tape](operand: Layer.Aux[Input0, DoublePlaceholder.Tape])
+        extends CumulativeLayer.Unary {
 
-      type BufferedBatch = DoubleMonoidBatch with MonoidBatch with UnaryBatch
+      type CumulativeTape = DoubleMonoidTape with MonoidTape with UnaryTape
 
       type Input = Input0
 
       override protected def rawForward(input0: Input) =
         new {
           override final val input = input0
-        } with MonoidBatch with DoubleMonoidBatch with UnaryBatch {
+        } with MonoidTape with DoubleMonoidTape with UnaryTape {
 
           val value = -upstream.value
 
@@ -160,19 +183,19 @@ object DifferentiableDouble {
 
     }
 
-    final case class Plus[Input0 <: Batch](
-        operand1: Layer.Aux[Input0, DoublePlaceholder.Batch],
-        operand2: Layer.Aux[Input0, DoublePlaceholder.Batch]
-    ) extends BufferedLayer.Binary {
+    final case class Plus[Input0 <: Tape](
+        operand1: Layer.Aux[Input0, DoublePlaceholder.Tape],
+        operand2: Layer.Aux[Input0, DoublePlaceholder.Tape]
+    ) extends CumulativeLayer.Binary {
 
-      type BufferedBatch = DoubleMonoidBatch with MonoidBatch with BinaryBatch
+      type CumulativeTape = DoubleMonoidTape with MonoidTape with BinaryTape
 
       type Input = Input0
 
-      override protected def rawForward(input0: Input): BufferedBatch = {
+      override protected def rawForward(input0: Input): CumulativeTape = {
         new {
           override final val input = input0
-        } with DoubleMonoidBatch with MonoidBatch with BinaryBatch {
+        } with DoubleMonoidTape with MonoidTape with BinaryTape {
 
           val value = upstream1.value + upstream2.value
 
@@ -185,17 +208,17 @@ object DifferentiableDouble {
       }
     }
 
-    final case class Reciprocal[Input0 <: Batch](operand: Layer.Aux[Input0, DoublePlaceholder.Batch])
-        extends BufferedLayer.Unary {
+    final case class Reciprocal[Input0 <: Tape](operand: Layer.Aux[Input0, DoublePlaceholder.Tape])
+        extends CumulativeLayer.Unary {
 
-      type BufferedBatch = DoubleMonoidBatch with MonoidBatch with UnaryBatch
+      type CumulativeTape = DoubleMonoidTape with MonoidTape with UnaryTape
 
       type Input = Input0
 
       override protected def rawForward(input0: Input) =
         new {
           override final val input = input0
-        } with MonoidBatch with DoubleMonoidBatch with UnaryBatch {
+        } with MonoidTape with DoubleMonoidTape with UnaryTape {
 
           val value = the[Numeric[Double]].one / upstream.value
 
@@ -209,19 +232,19 @@ object DifferentiableDouble {
 
     }
 
-    final case class Substract[Input0 <: Batch](
-        operand1: Layer.Aux[Input0, DoublePlaceholder.Batch],
-        operand2: Layer.Aux[Input0, DoublePlaceholder.Batch]
-    ) extends BufferedLayer.Binary {
+    final case class Substract[Input0 <: Tape](
+        operand1: Layer.Aux[Input0, DoublePlaceholder.Tape],
+        operand2: Layer.Aux[Input0, DoublePlaceholder.Tape]
+    ) extends CumulativeLayer.Binary {
 
-      type BufferedBatch = DoubleMonoidBatch with MonoidBatch with BinaryBatch
+      type CumulativeTape = DoubleMonoidTape with MonoidTape with BinaryTape
 
       type Input = Input0
 
-      override protected def rawForward(input0: Input): BufferedBatch = {
+      override protected def rawForward(input0: Input): CumulativeTape = {
         new {
           override final val input = input0
-        } with DoubleMonoidBatch with MonoidBatch with BinaryBatch {
+        } with DoubleMonoidTape with MonoidTape with BinaryTape {
 
           val value = upstream1.value - upstream2.value
 
@@ -234,19 +257,19 @@ object DifferentiableDouble {
       }
     }
 
-    final case class Times[Input0 <: Batch](
-        operand1: Layer.Aux[Input0, DoublePlaceholder.Batch],
-        operand2: Layer.Aux[Input0, DoublePlaceholder.Batch]
-    ) extends BufferedLayer.Binary {
+    final case class Times[Input0 <: Tape](
+        operand1: Layer.Aux[Input0, DoublePlaceholder.Tape],
+        operand2: Layer.Aux[Input0, DoublePlaceholder.Tape]
+    ) extends CumulativeLayer.Binary {
 
-      type BufferedBatch = DoubleMonoidBatch with MonoidBatch with BinaryBatch
+      type CumulativeTape = DoubleMonoidTape with MonoidTape with BinaryTape
 
       type Input = Input0
 
-      override protected def rawForward(input0: Input): BufferedBatch = {
+      override protected def rawForward(input0: Input): CumulativeTape = {
         new {
           override final val input = input0
-        } with DoubleMonoidBatch with MonoidBatch with BinaryBatch {
+        } with DoubleMonoidTape with MonoidTape with BinaryTape {
 
           override final val value = upstream1.value * upstream2.value
 
@@ -269,30 +292,31 @@ object DifferentiableDouble {
 
     }
 
-    abstract case class Weight(var value: Double) extends Layer with DoubleMonoidBatch {
-      override type Input = Batch
-      override type Output = Batch.Aux[Data, Delta]
+    abstract case class Weight(var value: Double) extends Layer with DoubleMonoidTape {
+      override type Input = Tape
+      override type Output = Tape.Aux[Data, Delta]
+
+      override final def isTrainable = true
 
       protected def optimizer: Optimizer
 
-      override def addReference() = this
+      override final def duplicate() = this
 
-      override def forward(any: Input) = this
+      override final def forward(any: Input) = this
 
-      override def backward(delta: Delta): Unit = {
+      override protected final def forceBackward(delta: Delta): Unit = {
         synchronized {
           value = optimizer.updateDouble(value, delta)
         }
       }
 
-      override def close(): Unit = {}
+      override final def close(): Unit = {}
 
     }
 
   }
 
   import Layers._
-
 
   object OptimizerFactory {
     implicit def shared(implicit optimizer: Optimizer): OptimizerFactory = new OptimizerFactory {
@@ -303,11 +327,23 @@ object DifferentiableDouble {
   trait OptimizerFactory {
     def doubleOptimizer(weight: Weight): Optimizer
   }
-  implicit def liftDouble: Lift.Aux[Double, Double, Double] = Lift.fromData
 
-  implicit def `min(Double,Double)`[Input <: Batch]: min.Case.Aux[Layer.Aux[Input, DoublePlaceholder.Batch],
-                                                                  Layer.Aux[Input, DoublePlaceholder.Batch],
-                                                                  Layer.Aux[Input, DoublePlaceholder.Batch]] = {
+  implicit def doubleToLiteral: ToLiteral.Aux[Double, Double, Double] = ToLiteral.fromData
+
+  /**
+    * Returns a [[Poly.MathFunctions.min.Case  Case]] that accepts two Double [[Layer]]s for the polymorphic function [[Poly.MathFunctions.min min]]
+    *
+    * @example{{{
+    * import com.thoughtworks.deeplearning.DifferentiableDouble._
+    * import com.thoughtworks.deeplearning.Symbolic
+    * def myNetwork(implicit inputDoubleLayer: Double @Symbolic)(anotherDoubleLayer: Double @Symbolic) = {
+    *   Poly.MathFunctions.min(inputDoubleLayer,anotherDoubleLayer)
+    * }
+    * }}}
+    */
+  implicit def `min(Double,Double)`[Input <: Tape]: min.Case.Aux[Layer.Aux[Input, DoublePlaceholder.Tape],
+                                                                 Layer.Aux[Input, DoublePlaceholder.Tape],
+                                                                 Layer.Aux[Input, DoublePlaceholder.Tape]] = {
     min.at { (leftLayer, rightLayer) =>
       If[Input, DoublePlaceholder.Data, DoublePlaceholder.Delta](LessThan[Input](leftLayer, rightLayer),
                                                                  leftLayer,
@@ -315,9 +351,20 @@ object DifferentiableDouble {
     }
   }
 
-  implicit def `max(Double,Double)`[Input <: Batch]: max.Case.Aux[Layer.Aux[Input, DoublePlaceholder.Batch],
-                                                                  Layer.Aux[Input, DoublePlaceholder.Batch],
-                                                                  Layer.Aux[Input, DoublePlaceholder.Batch]] = {
+  /**
+    * Returns a [[Poly.MathFunctions.max.Case Case]] that accepts two Double [[Layer]]s for the polymorphic function [[Poly.MathFunctions.max max]]
+    *
+    * @example{{{
+    * import com.thoughtworks.deeplearning.DifferentiableDouble._
+    * import com.thoughtworks.deeplearning.Symbolic
+    * def myNetwork(implicit inputDoubleLayer: Double @Symbolic)(anotherDoubleLayer: Double @Symbolic) = {
+    *   Poly.MathFunctions.max(inputDoubleLayer,anotherDoubleLayer)
+    * }
+    * }}}
+    */
+  implicit def `max(Double,Double)`[Input <: Tape]: max.Case.Aux[Layer.Aux[Input, DoublePlaceholder.Tape],
+                                                                 Layer.Aux[Input, DoublePlaceholder.Tape],
+                                                                 Layer.Aux[Input, DoublePlaceholder.Tape]] = {
     max.at { (leftLayer, rightLayer) =>
       If[Input, DoublePlaceholder.Data, DoublePlaceholder.Delta](LessThan[Input](leftLayer, rightLayer),
                                                                  rightLayer,
@@ -325,48 +372,136 @@ object DifferentiableDouble {
     }
   }
 
-  implicit def `Double-Double`[Input <: Batch]: -.Case.Aux[Layer.Aux[Input, DoublePlaceholder.Batch],
-                                                           Layer.Aux[Input, DoublePlaceholder.Batch],
-                                                           Layer.Aux[Input, DoublePlaceholder.Batch]] = {
+  /**
+    * Returns a [[Poly.MathMethods.-.Case Case]] that accepts two Double [[Layer]]s.
+    * The returned `Case` is used by the polymorphic function [[Poly.MathMethods.- -]],
+    * which is called in [[com.thoughtworks.deeplearning.Poly.MathOps MathOps]].
+    *
+    * @example{{{
+    * import com.thoughtworks.deeplearning.DifferentiableDouble._
+    * import com.thoughtworks.deeplearning.Symbolic
+    * def myNetwork(implicit inputDoubleLayer: Double @Symbolic)(anotherDoubleLayer: Double @Symbolic) = {
+    *   Poly.MathMethods.-(inputDoubleLayer,anotherDoubleLayer)
+    * }
+    * }}}
+    */
+  implicit def `Double-Double`[Input <: Tape]: -.Case.Aux[Layer.Aux[Input, DoublePlaceholder.Tape],
+                                                          Layer.Aux[Input, DoublePlaceholder.Tape],
+                                                          Layer.Aux[Input, DoublePlaceholder.Tape]] = {
     MathMethods.-.at { (leftLayer, rightLayer) =>
       Plus(leftLayer, Negative(rightLayer))
     }
   }
 
-  implicit def `Double+Double`[Input <: Batch]: +.Case.Aux[Layer.Aux[Input, DoublePlaceholder.Batch],
-                                                           Layer.Aux[Input, DoublePlaceholder.Batch],
-                                                           Layer.Aux[Input, DoublePlaceholder.Batch]] = {
+  /**
+    * Returns a [[Poly.MathMethods.+.Case Case]] that accepts two Double [[Layer]]s.
+    *
+    * The returned `Case` is used by the polymorphic function [[Poly.MathMethods.+ +]],
+    * which is called in [[com.thoughtworks.deeplearning.Poly.MathOps MathOps]].
+    *
+    * @example{{{
+    * import com.thoughtworks.deeplearning.DifferentiableDouble._
+    * import com.thoughtworks.deeplearning.Symbolic
+    * def myNetwork(implicit inputDoubleLayer: Double @Symbolic)(anotherDoubleLayer: Double @Symbolic) = {
+    *   Poly.MathMethods.+(inputDoubleLayer,anotherDoubleLayer)
+    * }
+    * }}}
+    */
+  implicit def `Double+Double`[Input <: Tape]: +.Case.Aux[Layer.Aux[Input, DoublePlaceholder.Tape],
+                                                          Layer.Aux[Input, DoublePlaceholder.Tape],
+                                                          Layer.Aux[Input, DoublePlaceholder.Tape]] = {
     MathMethods.+.at { (leftLayer, rightLayer) =>
       Plus(leftLayer, rightLayer)
     }
   }
 
-  implicit def `Double/Double`[Input <: Batch]: /.Case.Aux[Layer.Aux[Input, DoublePlaceholder.Batch],
-                                                           Layer.Aux[Input, DoublePlaceholder.Batch],
-                                                           Layer.Aux[Input, DoublePlaceholder.Batch]] = {
+  /**
+    * Returns a [[Poly.MathMethods./.Case Case]] that accepts two Double [[Layer]]s.
+    *
+    * The returned `Case` is used by the  polymorphic function [[Poly.MathMethods./ /]],
+    * which is called in [[com.thoughtworks.deeplearning.Poly.MathOps MathOps]].
+    *
+    * @example{{{
+    * import com.thoughtworks.deeplearning.DifferentiableDouble._
+    * import com.thoughtworks.deeplearning.Symbolic
+    * def myNetwork(implicit inputDoubleLayer: Double @Symbolic)(anotherDoubleLayer: Double @Symbolic) = {
+    *   Poly.MathMethods./(inputDoubleLayer,anotherDoubleLayer)
+    * }
+    * }}}
+    */
+  implicit def `Double/Double`[Input <: Tape]: /.Case.Aux[Layer.Aux[Input, DoublePlaceholder.Tape],
+                                                          Layer.Aux[Input, DoublePlaceholder.Tape],
+                                                          Layer.Aux[Input, DoublePlaceholder.Tape]] = {
     /.at { (leftLayer, rightLayer) =>
       Times(leftLayer, Reciprocal(rightLayer))
     }
   }
 
-  implicit def `Double*Double`[Input <: Batch]: *.Case.Aux[Layer.Aux[Input, DoublePlaceholder.Batch],
-                                                           Layer.Aux[Input, DoublePlaceholder.Batch],
-                                                           Layer.Aux[Input, DoublePlaceholder.Batch]] = {
+  /**
+    * Returns a [[Poly.MathMethods.*.Case Case]] that accepts two Double [[Layer]]s.
+    *
+    * The returned `Case` is used by the polymorphic function [[Poly.MathMethods.* *]],
+    * which is called in [[com.thoughtworks.deeplearning.Poly.MathOps MathOps]].
+    *
+    * @example{{{
+    * import com.thoughtworks.deeplearning.DifferentiableDouble._
+    * import com.thoughtworks.deeplearning.Symbolic
+    * def myNetwork(implicit inputDoubleLayer: Double @Symbolic)(anotherDoubleLayer: Double @Symbolic) = {
+    *   inputDoubleLayer * anotherDoubleLayer
+    * }
+    * }}}
+    */
+  implicit def `Double*Double`[Input <: Tape]: *.Case.Aux[Layer.Aux[Input, DoublePlaceholder.Tape],
+                                                          Layer.Aux[Input, DoublePlaceholder.Tape],
+                                                          Layer.Aux[Input, DoublePlaceholder.Tape]] = {
     *.at(Times(_, _))
   }
 
-  implicit def `log(Double)`[Input <: Batch]
-    : log.Case.Aux[Layer.Aux[Input, DoublePlaceholder.Batch], Layer.Aux[Input, DoublePlaceholder.Batch]] = {
+  /**
+    * Returns a [[Poly.MathFunctions.log.Case Case]] that accepts Double [[Layer]] for the polymorphic function [[Poly.MathFunctions.log log]]
+    *
+    * @example{{{
+    * import com.thoughtworks.deeplearning.DifferentiableDouble._
+    * import com.thoughtworks.deeplearning.Symbolic
+    * def myNetwork(implicit inputDoubleLayer: Double @Symbolic) = {
+    *   Poly.MathFunctions.log(inputDoubleLayer)
+    * }
+    * }}}
+    */
+  implicit def `log(Double)`[Input <: Tape]
+    : log.Case.Aux[Layer.Aux[Input, DoublePlaceholder.Tape], Layer.Aux[Input, DoublePlaceholder.Tape]] = {
     log.at(Log(_))
   }
 
-  implicit def `exp(Double)`[Input <: Batch]
-    : exp.Case.Aux[Layer.Aux[Input, DoublePlaceholder.Batch], Layer.Aux[Input, DoublePlaceholder.Batch]] = {
+  /**
+    * Returns a [[Poly.MathFunctions.exp.Case Case]] that accepts Double [[Layer]] for the polymorphic function [[Poly.MathFunctions.exp exp]]
+    *
+    * @example{{{
+    * import com.thoughtworks.deeplearning.DifferentiableDouble._
+    * import com.thoughtworks.deeplearning.Symbolic
+    * def myNetwork(implicit inputDoubleLayer: Double @Symbolic) = {
+    *   Poly.MathFunctions.exp(inputDoubleLayer)
+    * }
+    * }}}
+    */
+  implicit def `exp(Double)`[Input <: Tape]
+    : exp.Case.Aux[Layer.Aux[Input, DoublePlaceholder.Tape], Layer.Aux[Input, DoublePlaceholder.Tape]] = {
     exp.at(Exp(_))
   }
 
-  implicit def `abs(Double)`[Input <: Batch]
-    : abs.Case.Aux[Layer.Aux[Input, DoublePlaceholder.Batch], Layer.Aux[Input, DoublePlaceholder.Batch]] = {
+  /**
+    * Returns a [[Poly.MathFunctions.abs.Case Case]] that accepts Double [[Layer]] for the polymorphic function [[Poly.MathFunctions.abs abs]]
+    *
+    * @example{{{
+    * import com.thoughtworks.deeplearning.DifferentiableDouble._
+    * import com.thoughtworks.deeplearning.Symbolic
+    * def myNetwork(implicit inputDoubleLayer: Double @Symbolic) = {
+    *   Poly.MathFunctions.abs(inputDoubleLayer)
+    * }
+    * }}}
+    */
+  implicit def `abs(Double)`[Input <: Tape]
+    : abs.Case.Aux[Layer.Aux[Input, DoublePlaceholder.Tape], Layer.Aux[Input, DoublePlaceholder.Tape]] = {
     abs.at { operand =>
       If[Input, DoublePlaceholder.Data, DoublePlaceholder.Delta](LessThan(operand, Literal(the[Numeric[Double]].zero)),
                                                                  Negative(operand),
@@ -377,25 +512,38 @@ object DifferentiableDouble {
   implicit final class NativeDoubleOps(nativeDouble: Double) {
     def toWeight[InputData, InputDelta](
         implicit inputType: Placeholder[InputData, InputDelta],
-        optimizerFactory: OptimizerFactory): Layer.Aux[Batch.Aux[InputData, InputDelta], DoublePlaceholder.Batch] = {
+        optimizerFactory: OptimizerFactory): Layer.Aux[Tape.Aux[InputData, InputDelta], DoublePlaceholder.Tape] = {
       Weight(nativeDouble)
     }
   }
 
-  final class DoubleLayerOps[Input <: Batch](differentiable: Layer.Aux[Input, DoublePlaceholder.Batch]) {
+  final class DoubleLayerOps[Input <: Tape](differentiable: Layer.Aux[Input, DoublePlaceholder.Tape]) {
 
-    def unary_- : Layer.Aux[Input, DoublePlaceholder.Batch] = {
+    /**
+      * Opposite number
+      */
+    def unary_- : Layer.Aux[Input, DoublePlaceholder.Tape] = {
       Negative(differentiable)
     }
 
   }
 
-  implicit def toDoubleLayerOps[From, Input <: Batch](from: From)(
-      implicit toLayer: ToLayer.OfType[From, Input, DoublePlaceholder]
+  /**
+    * Implicitly converts any layer to [[DoubleLayerOps]], which enables common methods for Double layers.
+    *
+    * @example{{{
+    * import com.thoughtworks.deeplearning.DifferentiableDouble._
+    * }}}
+    */
+  implicit def toDoubleLayerOps[From, Input <: Tape](from: From)(
+      implicit toLayer: ToLayer.OfPlaceholder[From, Input, DoublePlaceholder]
   ): DoubleLayerOps[Input] = {
     new DoubleLayerOps(toLayer(from))
   }
 
+  /**
+    * @see [[com.thoughtworks.deeplearning.DifferentiableAny.Trainable Trainable]]
+    */
   implicit def doubleTrainable: Trainable[Double, Double] = new Trainable[Double, Double] {
     def apply(data: Double): Double = the[Numeric[Double]].one
   }

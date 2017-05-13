@@ -1,76 +1,87 @@
 package com.thoughtworks.deeplearning
 
-import com.thoughtworks.deeplearning.Layer.{Batch, CloseableOnce}
-import com.thoughtworks.deeplearning.Lift.Placeholder.{DataOf, DeltaOf}
-import com.thoughtworks.deeplearning.Lift._
+import com.thoughtworks.deeplearning.Layer.{Tape, CloseableOnce}
+import com.thoughtworks.deeplearning.Symbolic.Placeholder.{DataOf, DeltaOf}
+import com.thoughtworks.deeplearning.Symbolic._
 import com.thoughtworks.deeplearning.DifferentiableHList.Layers._
-import com.thoughtworks.deeplearning.Lift.Layers.Literal
+import com.thoughtworks.deeplearning.Symbolic.Layers.Literal
 import shapeless._
 
 import language.implicitConversions
 import language.existentials
 
 /**
+  * A namespace of common operators for [[shapeless.HList HList]] layers.
+  *
+  * After importing `DifferentiableHList._`, the following methods will be available on HList layers.
+  *  - [[DifferentiableHList.HListLayerOps.:: ::]]
+  *
   * @author 杨博 (Yang Bo) &lt;pop.atry@gmail.com&gt;
   */
 object DifferentiableHList {
 
   object Layers {
 
-    final case class HCons[Input0 <: Batch,
+    final case class HCons[Input0 <: Tape,
                            HeadData,
                            HeadDelta,
                            TailData <: shapeless.HList,
                            TailDelta <: shapeless.Coproduct](
-        head: Layer.Aux[Input0, Batch.Aux[HeadData, HeadDelta]],
-        tail: Layer.Aux[Input0, Batch.Aux[TailData, TailDelta]]
+        head: Layer.Aux[Input0, Tape.Aux[HeadData, HeadDelta]],
+        tail: Layer.Aux[Input0, Tape.Aux[TailData, TailDelta]]
     ) extends Layer {
       override type Input = Input0
 
-      final class Output private[HCons] (headBatch: Batch.Aux[HeadData, HeadDelta],
-                                         tailBatch: Batch.Aux[TailData, TailDelta])
-          extends Batch
+      final class Output private[HCons] (headTape: Tape.Aux[HeadData, HeadDelta],
+                                         tailTape: Tape.Aux[TailData, TailDelta])
+          extends Tape
           with CloseableOnce {
-        override def backward(delta: Delta): Unit = {
+
+        override val isTrainable = headTape.isTrainable || tailTape.isTrainable
+
+        override protected def forceBackward(delta: Delta): Unit = {
           delta match {
             case shapeless.Inl(headDelta) =>
-              headBatch.backward(headDelta)
+              headTape.backward(headDelta)
             case shapeless.Inr(tailDelta) =>
-              tailBatch.backward(tailDelta)
+              tailTape.backward(tailDelta)
           }
         }
 
         override def value: Data = {
-          headBatch.value :: tailBatch.value
+          headTape.value :: tailTape.value
         }
 
         override def close(): Unit = {
           super.close()
-          headBatch.close()
-          tailBatch.close()
+          headTape.close()
+          tailTape.close()
         }
 
         override type Data = HeadData :: TailData
         override type Delta = HeadDelta :+: TailDelta
 
-        override def addReference() = new Output(headBatch.addReference(), tailBatch.addReference())
+        override def duplicate() = new Output(headTape.duplicate(), tailTape.duplicate())
       }
 
       override def forward(input: Input) = new Output(head.forward(input), tail.forward(input))
 
     }
 
-    final case class Head[Input0 <: Batch, HeadData, HeadDelta, TailData <: shapeless.HList,
+    final case class Head[Input0 <: Tape, HeadData, HeadDelta, TailData <: shapeless.HList,
     TailDelta <: shapeless.Coproduct](
-        operand: Layer.Aux[Input0, Batch.Aux[::[HeadData, TailData], shapeless.:+:[HeadDelta, TailDelta]]]
+        operand: Layer.Aux[Input0, Tape.Aux[::[HeadData, TailData], shapeless.:+:[HeadDelta, TailDelta]]]
     ) extends Layer {
       override type Input = Input0
 
       final class Output private[Head] (
-          upstream: Batch.Aux[::[HeadData, TailData], shapeless.:+:[HeadDelta, TailDelta]])
-          extends Batch
+          upstream: Tape.Aux[::[HeadData, TailData], shapeless.:+:[HeadDelta, TailDelta]])
+          extends Tape
           with com.thoughtworks.deeplearning.Layer.CloseableOnce {
-        override def backward(delta: Delta): Unit = {
+
+        override val isTrainable = upstream.isTrainable
+
+        override protected def forceBackward(delta: Delta): Unit = {
           upstream.backward(shapeless.Inl(delta))
         }
 
@@ -86,22 +97,25 @@ object DifferentiableHList {
           upstream.close()
         }
 
-        override def addReference() = new Output(upstream.addReference())
+        override def duplicate() = new Output(upstream.duplicate())
       }
       override def forward(input: Input) = new Output(operand.forward(input))
 
     }
 
-    final case class Tail[Input0 <: Batch, HeadData, HeadDelta, TailData <: shapeless.HList,
+    final case class Tail[Input0 <: Tape, HeadData, HeadDelta, TailData <: shapeless.HList,
     TailDelta <: shapeless.Coproduct](
-        operand: Layer.Aux[Input0, Batch.Aux[HeadData :: TailData, shapeless.:+:[HeadDelta, TailDelta]]]
+        operand: Layer.Aux[Input0, Tape.Aux[HeadData :: TailData, shapeless.:+:[HeadDelta, TailDelta]]]
     ) extends Layer {
       override type Input = Input0
 
-      final class Output private[Tail] (upstream: Batch.Aux[HeadData :: TailData, shapeless.:+:[HeadDelta, TailDelta]])
-          extends Batch
+      final class Output private[Tail] (upstream: Tape.Aux[HeadData :: TailData, shapeless.:+:[HeadDelta, TailDelta]])
+          extends Tape
           with com.thoughtworks.deeplearning.Layer.CloseableOnce {
-        override def backward(delta: Delta): Unit = {
+
+        override val isTrainable = upstream.isTrainable
+
+        override protected def forceBackward(delta: Delta): Unit = {
           upstream.backward(shapeless.Inr(delta))
         }
 
@@ -117,7 +131,7 @@ object DifferentiableHList {
         override type Data = TailData
         override type Delta = TailDelta
 
-        override def addReference() = new Output(upstream.addReference())
+        override def duplicate() = new Output(upstream.duplicate())
       }
       override def forward(input: Input) = new Output(operand.forward(input))
 
@@ -125,49 +139,47 @@ object DifferentiableHList {
 
   }
 
-  /** @template */
   private[deeplearning] type HListPlaceholder = Placeholder[_ <: HList, _ <: Coproduct]
 
-  /** @template */
   private[deeplearning] type HNilPlaceholder = Placeholder[HNil, CNil]
 
-  /** @template */
   private[deeplearning] type :**:[Head <: Placeholder[_, _], Tail <: HListPlaceholder] =
     Placeholder[::[DataOf[Head], DataOf[Tail]], :+:[DeltaOf[Head], DeltaOf[Tail]]]
 
-  final class HListLayerOps[Input <: Batch, TailData <: HList, TailDelta <: Coproduct](
-      tail: Layer.Aux[Input, Batch.Aux[TailData, TailDelta]]) {
+  final class HListLayerOps[Input <: Tape, TailData <: HList, TailDelta <: Coproduct](
+      tail: Layer.Aux[Input, Tape.Aux[TailData, TailDelta]]) {
 
     def ::[Head, HeadData, HeadDelta](head: Head)(implicit headToLayer: ToLayer.Aux[Head, Input, HeadData, HeadDelta])
-      : Layer.Aux[Input, Batch.Aux[::[HeadData, TailData], :+:[HeadDelta, TailDelta]]] = {
-      HCons[Input, HeadData, HeadDelta, TailData, TailDelta](headToLayer(head), tail)
-    }
-
-    def :**:[Head, HeadData, HeadDelta](head: Head)(
-        implicit headToLayer: ToLayer.Aux[Head, Input, HeadData, HeadDelta])
-      : Layer.Aux[Input, Batch.Aux[::[HeadData, TailData], :+:[HeadDelta, TailDelta]]] = {
+      : Layer.Aux[Input, Tape.Aux[::[HeadData, TailData], :+:[HeadDelta, TailDelta]]] = {
       HCons[Input, HeadData, HeadDelta, TailData, TailDelta](headToLayer(head), tail)
     }
 
   }
 
-  implicit def toHListLayerOps[From, Input <: Batch, TailData <: HList, TailDelta <: Coproduct](from: From)(
+  /**
+    * Implicitly converts any layer to [[HListLayerOps]], which enables common methods for HList layers.
+    *
+    * @example{{{
+    * import com.thoughtworks.deeplearning.DifferentiableHList._
+    * }}}
+    */
+  implicit def toHListLayerOps[From, Input <: Tape, TailData <: HList, TailDelta <: Coproduct](from: From)(
       implicit toLayer: ToLayer.Aux[From, Input, TailData, TailDelta]
   ): HListLayerOps[Input, TailData, TailDelta] = {
     new HListLayerOps[Input, TailData, TailDelta](toLayer(from))
   }
 
-  final class HConsLayerOps[Input <: Batch, HeadData, HeadDelta, TailData <: HList, TailDelta <: Coproduct](
-      hcons: Layer.Aux[Input, Batch.Aux[::[HeadData, TailData], :+:[HeadDelta, TailDelta]]]) {
-    def head: Layer.Aux[Input, Batch.Aux[HeadData, HeadDelta]] =
+  final class HConsLayerOps[Input <: Tape, HeadData, HeadDelta, TailData <: HList, TailDelta <: Coproduct](
+      hcons: Layer.Aux[Input, Tape.Aux[::[HeadData, TailData], :+:[HeadDelta, TailDelta]]]) {
+    def head: Layer.Aux[Input, Tape.Aux[HeadData, HeadDelta]] =
       Head[Input, HeadData, HeadDelta, TailData, TailDelta](hcons)
 
-    def tail: Layer.Aux[Input, Batch.Aux[TailData, TailDelta]] =
+    def tail: Layer.Aux[Input, Tape.Aux[TailData, TailDelta]] =
       Tail[Input, HeadData, HeadDelta, TailData, TailDelta](hcons)
   }
 
   implicit def toHConsLayerOps[From,
-                               Input <: Batch,
+                               Input <: Tape,
                                OutputData,
                                OutputDelta,
                                HeadData,
@@ -175,25 +187,25 @@ object DifferentiableHList {
                                TailData <: HList,
                                TailDelta <: Coproduct](from: From)(
       implicit toLayer: ToLayer.Aux[From, Input, OutputData, OutputDelta],
-      toHListLayer: Layer.Aux[Input, Batch.Aux[OutputData, OutputDelta]] <:< Layer.Aux[
+      toHListLayer: Layer.Aux[Input, Tape.Aux[OutputData, OutputDelta]] <:< Layer.Aux[
         Input,
-        Batch.Aux[::[HeadData, TailData], :+:[HeadDelta, TailDelta]]]
+        Tape.Aux[::[HeadData, TailData], :+:[HeadDelta, TailDelta]]]
   ): HConsLayerOps[Input, HeadData, HeadDelta, TailData, TailDelta] = {
     new HConsLayerOps[Input, HeadData, HeadDelta, TailData, TailDelta](toHListLayer(toLayer(from)))
   }
 
-  implicit def liftHNil[From <: HNil]: Lift.Aux[From, HNil, CNil] = Lift.fromData
+  implicit def hnilToLiteral[From <: HNil]: ToLiteral.Aux[From, HNil, CNil] = ToLiteral.fromData
 
-  implicit def liftHCons[Head, HeadData, HeadDelta, Tail <: HList, TailData <: HList, TailDelta <: Coproduct](
-      implicit liftHead: Lazy[Lift.Aux[Head, HeadData, HeadDelta]],
-      liftTail: Lazy[Lift.Aux[Tail, TailData, TailDelta]])
-    : Lift.Aux[Head :: Tail, HeadData :: TailData, HeadDelta :+: TailDelta] = new Lift[Head :: Tail] {
+  implicit def hconsToLiteral[Head, HeadData, HeadDelta, Tail <: HList, TailData <: HList, TailDelta <: Coproduct](
+      implicit headToLiteral: Lazy[ToLiteral.Aux[Head, HeadData, HeadDelta]],
+      tailToLiteral: Lazy[ToLiteral.Aux[Tail, TailData, TailDelta]])
+    : ToLiteral.Aux[Head :: Tail, HeadData :: TailData, HeadDelta :+: TailDelta] = new ToLiteral[Head :: Tail] {
     override type Data = HeadData :: TailData
     override type Delta = HeadDelta :+: TailDelta
     override def apply(data: Head :: Tail): Literal[HeadData :: TailData] = {
       val head :: tail = data
-      val Literal(headData) = liftHead.value(head)
-      val Literal(tailData) = liftTail.value(tail)
+      val Literal(headData) = headToLiteral.value(head)
+      val Literal(tailData) = tailToLiteral.value(tail)
       Literal(headData :: tailData)
     }
   }

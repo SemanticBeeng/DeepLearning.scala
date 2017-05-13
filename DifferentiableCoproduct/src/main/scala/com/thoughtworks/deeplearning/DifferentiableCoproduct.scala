@@ -2,18 +2,26 @@ package com.thoughtworks.deeplearning
 
 import cats.Eval
 import com.thoughtworks.deeplearning.DifferentiableBoolean._
-import com.thoughtworks.deeplearning.Lift._
+import com.thoughtworks.deeplearning.Symbolic._
 import com.thoughtworks.deeplearning.DifferentiableBoolean.Layers.If
 import com.thoughtworks.deeplearning.Layer._
-import com.thoughtworks.deeplearning.Lift.Placeholder.{DataOf, DeltaOf}
+import com.thoughtworks.deeplearning.Symbolic.Placeholder.{DataOf, DeltaOf}
 import com.thoughtworks.deeplearning.DifferentiableCoproduct.Layers._
-import com.thoughtworks.deeplearning.Lift.Layers.Literal
+import com.thoughtworks.deeplearning.Symbolic.Layers.Literal
 import shapeless.{:+:, CNil, Coproduct, Lazy, Lub}
 
 import language.existentials
 import language.implicitConversions
 
 /**
+  * A namespace of common operators for [[shapeless.Coproduct Coproduct]] layers.
+  *
+  * After importing `DifferentiableCoproduct._`, the following methods will be available on Coproduct layers.
+  *  - [[DifferentiableCoproduct.CConsLayerOps.head head]]
+  *  - [[DifferentiableCoproduct.CConsLayerOps.tail tail]]
+  *  - [[DifferentiableCoproduct.CConsLayerOps.isInl isInl]]
+  *  - [[DifferentiableCoproduct.CConsLayerOps.choice choice]]
+  *
   * @author 杨博 (Yang Bo) &lt;pop.atry@gmail.com&gt;
   */
 object DifferentiableCoproduct {
@@ -27,22 +35,24 @@ object DifferentiableCoproduct {
 
   object Layers {
 
-    final case class Head[Input0 <: Batch, HeadData, HeadDelta, TailData <: shapeless.Coproduct,
+    final case class Head[Input0 <: Tape, HeadData, HeadDelta, TailData <: shapeless.Coproduct,
     TailDelta <: shapeless.Coproduct](
-        operand: Layer.Aux[Input0, Batch.Aux[shapeless.:+:[HeadData, TailData], shapeless.:+:[HeadDelta, TailDelta]]]
+        operand: Layer.Aux[Input0, Tape.Aux[shapeless.:+:[HeadData, TailData], shapeless.:+:[HeadDelta, TailDelta]]]
     ) extends Layer {
 
       final class Output private[Head] (
-          upstream: Batch.Aux[shapeless.:+:[HeadData, TailData], shapeless.:+:[HeadDelta, TailDelta]])
-          extends Batch
+          upstream: Tape.Aux[shapeless.:+:[HeadData, TailData], shapeless.:+:[HeadDelta, TailDelta]])
+          extends Tape
           with com.thoughtworks.deeplearning.Layer.CloseableOnce {
         override type Data = HeadData
         override type Delta = HeadDelta
 
-        val value =
+        override val isTrainable = upstream.isTrainable
+
+        override val value =
           upstream.value.asInstanceOf[shapeless.Inl[HeadData, TailData]].head
 
-        override def backward(delta: Delta): Unit = {
+        override protected def forceBackward(delta: Delta): Unit = {
           upstream.backward(shapeless.Inl(delta))
         }
 
@@ -51,8 +61,8 @@ object DifferentiableCoproduct {
           upstream.close()
         }
 
-        override def addReference() = {
-          new Output(upstream.addReference())
+        override def duplicate() = {
+          new Output(upstream.duplicate())
         }
 
       }
@@ -63,21 +73,24 @@ object DifferentiableCoproduct {
 
     }
 
-    final case class Inl[Input0 <: Batch, HeadData, HeadDelta](
-        operand: Layer.Aux[Input0, Batch.Aux[HeadData, HeadDelta]])
+    final case class Inl[Input0 <: Tape, HeadData, HeadDelta](
+        operand: Layer.Aux[Input0, Tape.Aux[HeadData, HeadDelta]])
         extends Layer {
 
       type Input = Input0
 
-      final class Output private[Inl] (upstream: Batch.Aux[HeadData, HeadDelta])
-          extends Batch
+      final class Output private[Inl] (upstream: Tape.Aux[HeadData, HeadDelta])
+          extends Tape
           with com.thoughtworks.deeplearning.Layer.CloseableOnce {
+
+        override val isTrainable = upstream.isTrainable
+
         def value = shapeless.Inl(upstream.value: HeadData)
 
         type Data = shapeless.Inl[HeadData, Nothing]
         type Delta = shapeless.:+:[HeadDelta, shapeless.Coproduct]
 
-        override def backward(delta: shapeless.:+:[HeadDelta, shapeless.Coproduct]): Unit = {
+        override protected def forceBackward(delta: shapeless.:+:[HeadDelta, shapeless.Coproduct]): Unit = {
           delta match {
             case shapeless.Inl(headDelta) => upstream.backward(headDelta)
             case shapeless.Inr(_) =>
@@ -89,7 +102,7 @@ object DifferentiableCoproduct {
           upstream.close()
         }
 
-        override def addReference() = new Output(upstream.addReference())
+        override def duplicate() = new Output(upstream.duplicate())
 
       }
 
@@ -97,21 +110,24 @@ object DifferentiableCoproduct {
 
     }
 
-    final case class Inr[Input0 <: Batch, TailData <: shapeless.Coproduct, TailDelta <: shapeless.Coproduct](
-        operand: Layer.Aux[Input0, Batch.Aux[TailData, TailDelta]])
+    final case class Inr[Input0 <: Tape, TailData <: shapeless.Coproduct, TailDelta <: shapeless.Coproduct](
+        operand: Layer.Aux[Input0, Tape.Aux[TailData, TailDelta]])
         extends Layer {
 
       type Input = Input0
 
-      final class Output private[Inr] (upstream: Batch.Aux[TailData, TailDelta])
-          extends Batch
+      final class Output private[Inr] (upstream: Tape.Aux[TailData, TailDelta])
+          extends Tape
           with com.thoughtworks.deeplearning.Layer.CloseableOnce {
-        def value = shapeless.Inr(upstream.value: TailData)
 
-        type Data = shapeless.Inr[Nothing, TailData]
-        type Delta = shapeless.:+:[Any, TailDelta]
+        override val isTrainable = upstream.isTrainable
 
-        override def backward(delta: shapeless.:+:[Any, TailDelta]): Unit = {
+        override def value = shapeless.Inr(upstream.value: TailData)
+
+        override type Data = shapeless.Inr[Nothing, TailData]
+        override type Delta = shapeless.:+:[Any, TailDelta]
+
+        override protected def forceBackward(delta: shapeless.:+:[Any, TailDelta]): Unit = {
           delta match {
             case shapeless.Inr(tailDelta) => upstream.backward(tailDelta)
             case shapeless.Inl(_) =>
@@ -123,7 +139,7 @@ object DifferentiableCoproduct {
           upstream.close()
         }
 
-        override def addReference() = new Output(upstream.addReference())
+        override def duplicate() = new Output(upstream.duplicate())
 
       }
 
@@ -131,22 +147,25 @@ object DifferentiableCoproduct {
 
     }
 
-    final case class Tail[Input0 <: Batch, HeadData, HeadDelta, TailData <: shapeless.Coproduct,
+    final case class Tail[Input0 <: Tape, HeadData, HeadDelta, TailData <: shapeless.Coproduct,
     TailDelta <: shapeless.Coproduct](
-        operand: Layer.Aux[Input0, Batch.Aux[shapeless.:+:[HeadData, TailData], shapeless.:+:[HeadDelta, TailDelta]]]
+        operand: Layer.Aux[Input0, Tape.Aux[shapeless.:+:[HeadData, TailData], shapeless.:+:[HeadDelta, TailDelta]]]
     ) extends Layer {
 
       final class Output private[Tail] (
-          upstream: Batch.Aux[shapeless.:+:[HeadData, TailData], shapeless.:+:[HeadDelta, TailDelta]])
-          extends Batch
+          upstream: Tape.Aux[shapeless.:+:[HeadData, TailData], shapeless.:+:[HeadDelta, TailDelta]])
+          extends Tape
           with com.thoughtworks.deeplearning.Layer.CloseableOnce {
+
         override type Data = TailData
         override type Delta = TailDelta
 
-        val value =
+        override val isTrainable = upstream.isTrainable
+
+        override val value =
           upstream.value.asInstanceOf[shapeless.Inr[TailData, TailData]].tail
 
-        override def backward(delta: Delta): Unit = {
+        override protected def forceBackward(delta: Delta): Unit = {
           upstream.backward(shapeless.Inr(delta))
         }
 
@@ -155,7 +174,7 @@ object DifferentiableCoproduct {
           upstream.close()
         }
 
-        override def addReference() = new Output(upstream.addReference())
+        override def duplicate() = new Output(upstream.duplicate())
       }
 
       type Input = Input0
@@ -164,30 +183,32 @@ object DifferentiableCoproduct {
 
     }
 
-    final case class IsInl[Input0 <: Batch, HeadData, HeadDelta, TailData <: shapeless.Coproduct,
+    final case class IsInl[Input0 <: Tape, HeadData, HeadDelta, TailData <: shapeless.Coproduct,
     TailDelta <: shapeless.Coproduct](
-        operand: Layer.Aux[Input0, Batch.Aux[shapeless.:+:[HeadData, TailData], shapeless.:+:[HeadDelta, TailDelta]]]
+        operand: Layer.Aux[Input0, Tape.Aux[shapeless.:+:[HeadData, TailData], shapeless.:+:[HeadDelta, TailDelta]]]
     ) extends Layer {
 
       final class Output private[IsInl] (
-          upstream: Batch.Aux[shapeless.:+:[HeadData, TailData], shapeless.:+:[HeadDelta, TailDelta]])
-          extends BooleanMonoidBatch
-          with Batch
+          upstream: Tape.Aux[shapeless.:+:[HeadData, TailData], shapeless.:+:[HeadDelta, TailDelta]])
+          extends BooleanMonoidTape
+          with Tape
           with CloseableOnce {
+
+        override val isTrainable = upstream.isTrainable
 
         override val value = upstream.value match {
           case shapeless.Inl(_) => true
           case shapeless.Inr(_) => false
         }
 
-        override def backward(delta: Boolean): Unit = {}
+        override protected def forceBackward(delta: Boolean): Unit = {}
 
         override def close(): Unit = {
           super.close()
           upstream.close()
         }
 
-        override def addReference() = new Output(upstream.addReference())
+        override def duplicate() = new Output(upstream.duplicate())
 
       }
 
@@ -198,8 +219,15 @@ object DifferentiableCoproduct {
 
   }
 
+  /**
+    * A helper that contains common boilerplate code for all [[shapeless.Coproduct Coproduct]] layers.
+    *
+    * @example{{{
+    * import com.thoughtworks.deeplearning.DifferentiableCoproduct._
+    * }}}
+    */
   final class CConsLayerOps[
-      Input <: Batch,
+      Input <: Tape,
       HeadData,
       HeadDelta,
       TailData <: shapeless.Coproduct,
@@ -207,14 +235,14 @@ object DifferentiableCoproduct {
   ](
       ccons: Layer.Aux[
         Input,
-        Batch.Aux[shapeless.:+:[HeadData, TailData], shapeless.:+:[HeadDelta, TailDelta]]
+        Tape.Aux[shapeless.:+:[HeadData, TailData], shapeless.:+:[HeadDelta, TailDelta]]
       ]
   ) {
 
-    def head: Layer.Aux[Input, Batch.Aux[HeadData, HeadDelta]] =
+    def head: Layer.Aux[Input, Tape.Aux[HeadData, HeadDelta]] =
       Head[Input, HeadData, HeadDelta, TailData, TailDelta](ccons)
 
-    def tail: Layer.Aux[Input, Batch.Aux[TailData, TailDelta]] =
+    def tail: Layer.Aux[Input, Tape.Aux[TailData, TailDelta]] =
       Tail[Input, HeadData, HeadDelta, TailData, TailDelta](ccons)
 
     def choice[HeadCase,
@@ -225,27 +253,34 @@ object DifferentiableCoproduct {
                TailOutputDelta,
                NN,
                OutputData,
-               OutputDelta](caseHead: Layer.Aux[Input, Batch.Aux[HeadData, HeadDelta]] => HeadCase)(
-        caseTail: Layer.Aux[Input, Batch.Aux[TailData, TailDelta]] => TailCase)(
+               OutputDelta](caseHead: Layer.Aux[Input, Tape.Aux[HeadData, HeadDelta]] => HeadCase)(
+        caseTail: Layer.Aux[Input, Tape.Aux[TailData, TailDelta]] => TailCase)(
         implicit headToLayer: ToLayer.Aux[HeadCase, Input, HeadOutputData, HeadOutputDelta],
         tailToLayer: ToLayer.Aux[TailCase, Input, TailOutputData, TailOutputDelta],
-        lub: Lub[Layer.Aux[Input, Batch.Aux[HeadOutputData, HeadOutputDelta]],
-                 Layer.Aux[Input, Batch.Aux[TailOutputData, TailOutputDelta]],
+        lub: Lub[Layer.Aux[Input, Tape.Aux[HeadOutputData, HeadOutputDelta]],
+                 Layer.Aux[Input, Tape.Aux[TailOutputData, TailOutputDelta]],
                  NN],
         commonToLayer: ToLayer.Aux[NN, Input, OutputData, OutputDelta]
-    ): Layer.Aux[Input, Batch.Aux[OutputData, OutputDelta]] = {
+    ): Layer.Aux[Input, Tape.Aux[OutputData, OutputDelta]] = {
       If[Input, OutputData, OutputDelta](isInl,
                                          commonToLayer(lub.left(headToLayer(caseHead(head)))),
                                          commonToLayer(lub.right(tailToLayer(caseTail(tail)))))
     }
 
-    def isInl: Layer.Aux[Input, BooleanPlaceholder.Batch] =
+    def isInl: Layer.Aux[Input, BooleanPlaceholder.Tape] =
       IsInl[Input, HeadData, HeadDelta, TailData, TailDelta](ccons)
 
   }
 
+  /**
+    * Implicitly converts any layer to [[CConsLayerOps]], which enables common methods for CConsLayerOps layers.
+    *
+    * @example{{{
+    * import com.thoughtworks.deeplearning.DifferentiableCoproduct._
+    * }}}
+    */
   implicit def toCConsLayerOps[From,
-                               Input <: Batch,
+                               Input <: Tape,
                                OutputData,
                                OutputDelta,
                                HeadData,
@@ -253,28 +288,33 @@ object DifferentiableCoproduct {
                                TailData <: shapeless.Coproduct,
                                TailDelta <: shapeless.Coproduct](from: From)(
       implicit toLayer: ToLayer.Aux[From, Input, OutputData, OutputDelta],
-      toCoproductLayer: Layer.Aux[Input, Batch.Aux[OutputData, OutputDelta]] <:< Layer.Aux[
+      toCoproductLayer: Layer.Aux[Input, Tape.Aux[OutputData, OutputDelta]] <:< Layer.Aux[
         Input,
-        Batch.Aux[shapeless.:+:[HeadData, TailData], shapeless.:+:[HeadDelta, TailDelta]]]
+        Tape.Aux[shapeless.:+:[HeadData, TailData], shapeless.:+:[HeadDelta, TailDelta]]]
   ): CConsLayerOps[Input, HeadData, HeadDelta, TailData, TailDelta] = {
     new CConsLayerOps[Input, HeadData, HeadDelta, TailData, TailDelta](toCoproductLayer(toLayer(from)))
   }
 
-  implicit def liftCNil: Lift.Aux[CNil, CNil, CNil] = Lift.fromData
+  implicit def cnilToLiteral: ToLiteral.Aux[CNil, CNil, CNil] = ToLiteral.fromData
 
-  implicit def liftCCons[Head, HeadData, HeadDelta, Tail <: Coproduct, TailData <: Coproduct, TailDelta <: Coproduct](
-      implicit liftHead: Lazy[Lift.Aux[Head, HeadData, HeadDelta]],
-      liftTail: Lazy[Lift.Aux[Tail, TailData, TailDelta]])
-    : Lift.Aux[Head :+: Tail, HeadData :+: TailData, HeadDelta :+: TailDelta] = new Lift[Head :+: Tail] {
+  implicit def cconsToLiteral[Head,
+                              HeadData,
+                              HeadDelta,
+                              Tail <: Coproduct,
+                              TailData <: Coproduct,
+                              TailDelta <: Coproduct](
+      implicit headToLiteral: Lazy[ToLiteral.Aux[Head, HeadData, HeadDelta]],
+      tailToLiteral: Lazy[ToLiteral.Aux[Tail, TailData, TailDelta]])
+    : ToLiteral.Aux[Head :+: Tail, HeadData :+: TailData, HeadDelta :+: TailDelta] = new ToLiteral[Head :+: Tail] {
     override type Data = HeadData :+: TailData
     override type Delta = HeadDelta :+: TailDelta
     override def apply(data: :+:[Head, Tail]): Literal[HeadData :+: TailData] = {
       data match {
         case shapeless.Inl(head) =>
-          val Literal(headData) = liftHead.value(head)
+          val Literal(headData) = headToLiteral.value(head)
           Literal(shapeless.Inl(headData))
         case shapeless.Inr(tail) =>
-          val Literal(tailData) = liftTail.value(tail)
+          val Literal(tailData) = tailToLiteral.value(tail)
           Literal(shapeless.Inr(tailData))
       }
     }

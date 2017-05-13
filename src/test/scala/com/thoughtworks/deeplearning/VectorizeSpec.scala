@@ -2,7 +2,7 @@ package com.thoughtworks
 package deeplearning
 
 import cats.Eval
-import com.thoughtworks.deeplearning.Lift._
+import com.thoughtworks.deeplearning.Symbolic._
 import org.scalatest._
 import com.thoughtworks.deeplearning.DifferentiableAny._
 import com.thoughtworks.deeplearning.DifferentiableDouble._
@@ -34,7 +34,7 @@ final class VectorizeSpec extends FreeSpec with Matchers {
       )
     }
 
-    def makeMinibatch = {
+    def makeMinitape = {
       import shapeless._
       val field0 :: field1 :: field2 :: field3 :: HNil = trainingData(Random.nextInt(trainingData.length))
 
@@ -89,10 +89,10 @@ final class VectorizeSpec extends FreeSpec with Matchers {
 
       predictAndPrint(predictionData0)
 
-      trainNetwork.train(makeMinibatch)
+      trainNetwork.train(makeMinitape)
       def assertClear(layer: Any): Unit = {
         layer match {
-          case cached: BufferedLayer =>
+          case cached: CumulativeLayer =>
             cached.cache shouldBe empty
           case _ =>
         }
