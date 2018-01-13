@@ -1,2 +1,6 @@
 target/
 local.sbt
+project/.boot/
+project/.sbtboot/
+project/.ivy/
+
