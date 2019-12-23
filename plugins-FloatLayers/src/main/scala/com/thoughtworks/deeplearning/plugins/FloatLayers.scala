@@ -4,14 +4,16 @@ import com.thoughtworks.deeplearning.DeepLearning.Tape
 import com.thoughtworks.feature.{Factory, ImplicitApply, PartialApply}
 import com.thoughtworks.feature.Factory.inject
 import com.thoughtworks.raii.asynchronous._
-
 import scalaz.syntax.all._
+
 import scala.annotation.meta.getter
 import scalaz.Apply
 import com.thoughtworks.continuation._
 import com.thoughtworks.future._
 import DeepLearning.ops._
 import com.thoughtworks.deeplearning.plugins.Layers.ToLayer
+import com.thoughtworks.deeplearning.plugins.Layers.Eager
+import com.thoughtworks.dsl.Dsl
 
 /** A plugin that provides differentiable operators
   * on neural networks whose [[DeepLearning.Data Data]] and [[DeepLearning.Delta Delta]] is [[scala.Float]].
@@ -27,17 +29,18 @@ import com.thoughtworks.deeplearning.plugins.Layers.ToLayer
 trait FloatLayers extends Layers {
 
   trait ImplicitsApi extends super[Layers].ImplicitsApi {
-//
-//    @inject
-//    protected val floatLayerFactory: Factory[FloatLayer]
-//
-//    @inject
-//    protected val floatLayerPartialApplyRawForward: PartialApply[floatLayerFactory.Constructor,
-//                                                                 shapeless.Witness.`"rawForward"`.T]
-//
-//    @inject
-//    protected def floatLayerPartialApplyRawForwardParameter
-//      : Do[Tape[Float, Float]] <:< floatLayerPartialApplyRawForward.Parameter
+    implicit def eagerFloatDsl[Differentiable, Data, Delta, Constructor, Out <: FloatLayer](
+        implicit implicitApply: ImplicitApply.Aux[floatPartialApplyRawForward.Rest, Out]
+    ): Dsl[Eager[Differentiable, Data, Delta], FloatLayer, Data] = {
+      new Dsl[Eager[Differentiable, Data, Delta], FloatLayer, Data] {
+        def interpret(keyword: Eager[Differentiable, Data, Delta], handler: Data => FloatLayer): Out =
+          FloatLayer(
+            keyword.deepLearning.forward(keyword.operand0).flatMap { tape =>
+              handler(tape.data).internalForward
+            }
+          )
+      }
+    }
 
     implicit def toFloatLayer[Out <: FloatLayer](
         implicit implicitApply: ImplicitApply.Aux[floatPartialApplyRawForward.Rest, Out])
@@ -290,7 +293,27 @@ trait FloatLayers extends Layers {
   trait FloatLayerApi extends super[Layers].LayerApi {
     type Data = Float
     type Delta = Float
+
+    final def predict: Future[Data] = {
+      val doData = forward.map(_.data)
+      doData.run
+    }
+
+    final def train: Future[Data] = {
+      val doData = forward.flatMap[Data] { tape =>
+        Do.garbageCollected(tape.backward(Do.now(1.0f.toFloat))).intransitiveMap { _: Unit =>
+          tape.data
+        }
+      }
+      doData.run
+    }
+
+    /** A bridge for calling [[rawForward]] in [[FloatLayers]] */
+    private[FloatLayers] final def internalForward: Do[Tape[Float, Float]] = rawForward
+
+    override def forward: Do[Tape[Float, Float]] = rawForward
   }
+
   object FloatLayer {
 
     /** @usecase def apply(forward: Do[Tape[Float, Float]]): FloatLayer = ???
@@ -302,7 +325,7 @@ trait FloatLayers extends Layers {
       implicitApply(floatPartialApplyRawForward(floatLayerFactory.newInstance, floatRawForwardParameter(forward)))
     }
 
-    /** Internal helper to create unary [[FloatLayer]]. */
+    /** Internal helper to create an unary [[FloatLayer]]. */
     def unary[Operand0, Input0Data, Input0Delta, Out <: FloatLayer](
         operand0: Operand0
     )(f: Input0Data => (Float, Float => Input0Delta))(
@@ -321,7 +344,7 @@ trait FloatLayers extends Layers {
       })
     }
 
-    /** Internal helper to create unary [[FloatLayer]]. */
+    /** Internal helper to create a binary [[FloatLayer]]. */
     def binary[Operand0, Operand1, Input0Data, Input0Delta, Input1Data, Input1Delta, Out <: FloatLayer](
         operand0: Operand0,
         operand1: Operand1

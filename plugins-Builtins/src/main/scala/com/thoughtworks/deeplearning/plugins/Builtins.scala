@@ -13,27 +13,33 @@ trait Builtins
     with Logging
     with Names
     with Operators
-    with FloatTraining
     with FloatLiterals
     with FloatWeights
     with FloatLayers
     with CumulativeFloatLayers
-    with DoubleTraining
     with DoubleLiterals
     with DoubleWeights
     with DoubleLayers
-    with CumulativeDoubleLayers {
+    with CumulativeDoubleLayers
+    with TensorLiterals
+    with TensorWeights
+    with TensorLayers
+    with CumulativeTensorLayers
+    with HLists
+    with Products {
 
   trait ImplicitsApi
       extends super[Layers].ImplicitsApi
       with super[Weights].ImplicitsApi
       with super[Operators].ImplicitsApi
-      with super[FloatTraining].ImplicitsApi
       with super[FloatLiterals].ImplicitsApi
       with super[FloatLayers].ImplicitsApi
-      with super[DoubleTraining].ImplicitsApi
       with super[DoubleLiterals].ImplicitsApi
       with super[DoubleLayers].ImplicitsApi
+      with super[TensorLiterals].ImplicitsApi
+      with super[TensorLayers].ImplicitsApi
+      with super[HLists].ImplicitsApi
+      with super[Products].ImplicitsApi
 
   type Implicits <: ImplicitsApi
 

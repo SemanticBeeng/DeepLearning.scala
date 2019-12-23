@@ -1,14 +1,16 @@
 package com.thoughtworks.deeplearning
+import java.io.{PrintStream, PrintWriter}
+
 import com.thoughtworks.deeplearning.DeepLearning.Tape
 import com.thoughtworks.continuation._
 import com.thoughtworks.future._
-
 import scalaz.syntax.all._
 import com.thoughtworks.raii.asynchronous._
 import simulacrum.typeclass
 
 import scala.language.implicitConversions
 import algebra.ring.MultiplicativeMonoid
+import scalaz.Semigroup
 
 object DeepLearning {
 
@@ -31,11 +33,11 @@ object DeepLearning {
     /** Returns an asynchronous [[com.thoughtworks.raii.asynchronous.Do Do]] of forward pass, which creates a wengert list. */
     def forward(differentiable: Differentiable): Do[Tape[Data, Delta]]
 
-    /** Returns a [[com.thoughtworks.future.Future Future]] that updates [[plugins.Weights.Weight Weight]] internally used by `differentiable`. */
-    def train(differentiable: Differentiable)(implicit monoid: MultiplicativeMonoid[Delta]): Future[Data]
+//    /** Returns a [[com.thoughtworks.future.Future Future]] that updates [[plugins.Weights.Weight Weight]] internally used by `differentiable`. */
+//    def train(differentiable: Differentiable)(implicit monoid: MultiplicativeMonoid[Delta]): Future[Data]
 
-    /** Returns a [[com.thoughtworks.future.Future Future]] of the [[DeepLearning.Tape.data data]] of the `differentiable` expression. */
-    def predict(differentiable: Differentiable): Future[Data]
+//    /** Returns a [[com.thoughtworks.future.Future Future]] of the [[DeepLearning.Tape.data data]] of the `differentiable` expression. */
+//    def predict(differentiable: Differentiable): Future[Data]
   }
 
 }
@@ -60,17 +62,4 @@ trait DeepLearning[Differentiable] extends SimulacrumIssue82WorkAround[Different
 
   def forward(differentiable: Differentiable): Do[Tape[Data, Delta]]
 
-  final def train(differentiable: Differentiable)(implicit monoid: MultiplicativeMonoid[Delta]): Future[Data] = {
-    val doData = forward(differentiable).flatMap[Data] { tape =>
-      Do.garbageCollected(tape.backward(Do.now(monoid.one))).intransitiveMap { _: Unit =>
-        tape.data
-      }
-    }
-    doData.run
-  }
-
-  final def predict(differentiable: Differentiable): Future[Data] = {
-    val doData = forward(differentiable).map(_.data)
-    doData.run
-  }
 }

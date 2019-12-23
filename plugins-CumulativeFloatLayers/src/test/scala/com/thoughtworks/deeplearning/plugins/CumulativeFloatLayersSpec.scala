@@ -65,7 +65,7 @@ final class CumulativeFloatLayersSpec
   "Plus" in {
 
     val hyperparameters =
-      Factory[FloatTraining with Operators with FloatLiterals with CumulativeFloatLayers with ImplicitsSingleton with FixedLearningRate]
+      Factory[Operators with FloatLiterals with CumulativeFloatLayers with ImplicitsSingleton with FixedLearningRate]
         .newInstance(fixedLearningRate = 1.0f)
     import hyperparameters.implicits._
 
@@ -92,7 +92,7 @@ final class CumulativeFloatLayersSpec
 
   "Plus with Predict" in {
     val hyperparameters =
-      Factory[FloatTraining with Operators with FloatLiterals with CumulativeFloatLayers with ImplicitsSingleton with FixedLearningRate]
+      Factory[Operators with FloatLiterals with CumulativeFloatLayers with ImplicitsSingleton with FixedLearningRate]
         .newInstance(fixedLearningRate = 1.0f)
     import hyperparameters.implicits._
 
@@ -122,7 +122,7 @@ final class CumulativeFloatLayersSpec
 
   "Predict -- use for" in {
     val hyperparameters =
-      Factory[FloatTraining with Operators with FloatLiterals with CumulativeFloatLayers with ImplicitsSingleton with FixedLearningRate]
+      Factory[Operators with FloatLiterals with CumulativeFloatLayers with ImplicitsSingleton with FixedLearningRate]
         .newInstance(fixedLearningRate = 1.0f)
     import hyperparameters.implicits._
 
@@ -155,7 +155,7 @@ final class CumulativeFloatLayersSpec
 
   "will not stackOverFlow" in {
     val hyperparameters =
-      Factory[FloatTraining with Operators with FloatLiterals with CumulativeFloatLayers with ImplicitsSingleton with FixedLearningRate]
+      Factory[Operators with FloatLiterals with CumulativeFloatLayers with ImplicitsSingleton with FixedLearningRate]
         .newInstance(fixedLearningRate = 1.0f)
     import hyperparameters.implicits._
 
@@ -187,7 +187,7 @@ final class CumulativeFloatLayersSpec
 
   "min" in {
     val hyperparameters =
-      Factory[FloatTraining with Operators with FloatLiterals with CumulativeFloatLayers with ImplicitsSingleton with FixedLearningRate]
+      Factory[Operators with FloatLiterals with CumulativeFloatLayers with ImplicitsSingleton with FixedLearningRate]
         .newInstance(fixedLearningRate = 1.0f)
     import hyperparameters.implicits._
 
@@ -219,7 +219,7 @@ final class CumulativeFloatLayersSpec
 
   "max" in {
     val hyperparameters =
-      Factory[FloatTraining with Operators with FloatLiterals with CumulativeFloatLayers with ImplicitsSingleton with FixedLearningRate]
+      Factory[Operators with FloatLiterals with CumulativeFloatLayers with ImplicitsSingleton with FixedLearningRate]
         .newInstance(fixedLearningRate = 1.0f)
     import hyperparameters.implicits._
 
@@ -251,7 +251,7 @@ final class CumulativeFloatLayersSpec
 
   "log" in {
     val hyperparameters =
-      Factory[FloatTraining with Operators with FloatLiterals with CumulativeFloatLayers with ImplicitsSingleton with FixedLearningRate]
+      Factory[Operators with FloatLiterals with CumulativeFloatLayers with ImplicitsSingleton with FixedLearningRate]
         .newInstance(fixedLearningRate = 0.5f)
     import hyperparameters.implicits._
 
@@ -285,7 +285,7 @@ final class CumulativeFloatLayersSpec
 
   "exp" in {
     val hyperparameters =
-      Factory[FloatTraining with Operators with FloatLiterals with CumulativeFloatLayers with ImplicitsSingleton with FixedLearningRate]
+      Factory[Operators with FloatLiterals with CumulativeFloatLayers with ImplicitsSingleton with FixedLearningRate]
         .newInstance(fixedLearningRate = 0.1f)
     import hyperparameters.implicits._
 
@@ -319,7 +319,7 @@ final class CumulativeFloatLayersSpec
 
   "abs" in {
     val hyperparameters =
-      Factory[FloatTraining with Operators with FloatLiterals with CumulativeFloatLayers with ImplicitsSingleton with FixedLearningRate]
+      Factory[Operators with FloatLiterals with CumulativeFloatLayers with ImplicitsSingleton with FixedLearningRate]
         .newInstance(fixedLearningRate = 1.0f)
     import hyperparameters.implicits._
 
@@ -351,7 +351,7 @@ final class CumulativeFloatLayersSpec
 
   "unary_-" in {
     val hyperparameters =
-      Factory[FloatTraining with Operators with FloatLiterals with CumulativeFloatLayers with ImplicitsSingleton with FixedLearningRate]
+      Factory[Operators with FloatLiterals with CumulativeFloatLayers with ImplicitsSingleton with FixedLearningRate]
         .newInstance(fixedLearningRate = 1.0f)
     import hyperparameters.implicits._
 
@@ -379,5 +379,60 @@ final class CumulativeFloatLayersSpec
       loss should be(0)
     }
 
+  }
+
+  "eager execution" - {
+    "single expression" in {
+      val hyperparameters =
+        Factory[Operators with FloatLiterals with CumulativeFloatLayers with ImplicitsSingleton with FixedLearningRate]
+          .newInstance(fixedLearningRate = 1.0f)
+
+      import hyperparameters.implicits._
+
+      val weight = hyperparameters.FloatWeight(1.0f)
+
+      def myNetwork(input: Float): hyperparameters.FloatLayer = {
+        6.7f + !(input + weight) + weight + 5.5f
+      }
+
+      def train(inputData: Float): Future[Float] = {
+        myNetwork(inputData).train
+      }
+
+      for {
+        _ <- train(1.0f)
+        _ <- train(1.0f)
+        _ <- train(1.0f)
+        _ <- train(1.0f)
+        _ <- train(1.0f)
+      } yield weight.data should be(-4)
+    }
+
+    "multiple expression" in {
+      val hyperparameters =
+        Factory[Products with Operators with FloatLiterals with CumulativeFloatLayers with ImplicitsSingleton with FixedLearningRate]
+          .newInstance(fixedLearningRate = 1.0f)
+
+      import hyperparameters.implicits._
+
+      val weight = hyperparameters.FloatWeight(1.0f)
+
+      def myNetwork(input: Float): hyperparameters.FloatLayer = {
+        val (a, b, c) = !(input + weight, 2.0f, weight)
+        6.7f + a + b + c + weight + 5.5f
+      }
+
+      def train(inputData: Float): Future[Float] = {
+        myNetwork(inputData).train
+      }
+
+      for {
+        _ <- train(1.0f)
+        _ <- train(1.0f)
+        _ <- train(1.0f)
+        _ <- train(1.0f)
+        _ <- train(1.0f)
+      } yield weight.data should be(-4)
+    }
   }
 }
